@@ -32,5 +32,5 @@ oc new-app -n $NAMESPACE \
            -p GITHUB_WEBHOOK_SECRET=$GITHUB_WEBHOOK_SECRET \
            -p SOURCE_REPOSITORY_REF=main \
            -p OUTPUT_DIR=dist/${APPLICATION_NAME} \
-            fatesg-react
+            fatesg-spa
 # --loglevel

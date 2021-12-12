@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 
+
+#Passos para criar o template
+#oc create -f fatesg-nginx-template.yaml -n fatesg-v1
+#oc new-app (para criar o app com os parâmetro definidos no template)
+
 #oc delete template/fatesg-react -n fatesg-v1
 #oc delete all -l app=react-fatesg
 #oc delete secrets -l=app=react-fatesg
@@ -30,7 +35,7 @@ oc new-app -n $NAMESPACE \
            -p APPLICATION_NAME=$APPLICATION_NAME \
            -p SOURCE_REPOSITORY_URL=$SOURCE_REPOSITORY_URL \
            -p GITHUB_WEBHOOK_SECRET=$GITHUB_WEBHOOK_SECRET \
-           -p SOURCE_REPOSITORY_REF=main \
+           -p SOURCE_REPOSITORY_REF=master \
            -p OUTPUT_DIR=build \
-            fatesg-react
+            fatesg-spa
 # --loglevel
