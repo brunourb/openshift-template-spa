@@ -1,0 +1,400 @@
+apiVersion: template.openshift.io/v1
+kind: Template
+labels:
+  template: fatesg-spa
+  application: modern-web-app
+message: |-
+  Projeto criado como exemplo para o móduo de Plataforma como Serviço(PaaS) da Faculdade Senai Fatesg.
+  Podemo utilizar os nomes das variáveis passadas como parâmetro : ${FACULDADE}.
+metadata:
+  name: fatesg-spa
+  annotations:
+    description: |-
+      Template genérico para uma aplicação Web. Para mais informações sobre este template, incluindo considerações do OpenShift, por favor acesso o link
+      https://dominio/openshift/templates/blob/master/README.md.
+
+      AVISO: Este template não trabalha como dados persistentes.
+    iconClass: icon-fedora
+    tags: quickstart,nginx,fatesg
+    openshift.io/display-name: Example de aplicação SPA(Angular|React) para deploy
+    openshift.io/documentation-url: https://github.com/sclorg/nginx-ex
+    openshift.io/long-description: Este template foi criado na disciplina de Plataforma como Serviço
+    openshift.io/provider-display-name: Faculdade Senai Fatesg
+    openshift.io/support-url: https://senaigo.com.br
+
+objects:
+  #Advanced Build Operation (Verificar conceito Chaning Build ou Multi Stage Docker)
+  - apiVersion: v1
+    kind: ImageStream
+    metadata:
+      #Nome da imageStream publicada
+      #Voce pode substituir o nome do object com parâmetro
+      #name: ${NAME}-runtime
+      name: nginx-ist-runtime
+      labels:
+        app: ${APPLICATION_NAME}
+    spec:
+      tags:
+        - name: latest
+          from:
+            #Estamos criando uma imageStreamTag para pegar o código de uma referência
+            # do docker para este gerar a nossa imagem.
+            kind: DockerImage
+            name: centos/nginx-112-centos7:latest
+
+            #Usar imagem oficial dentro do OCP/OKD
+#            kind: ImageStreamTag
+#            namespace: openshift
+#            name: nginx:1.16
+
+  #Esta IST será o receptáculo do código-fonte.
+  #Neste contexto, esta imagem fará o build da código-fonte usando o conceito S2I(Source to Image)
+  - apiVersion: v1
+    kind: ImageStream
+    metadata:
+      #Nome da imageStream publicada
+      #Voce pode substituir o nome do object com parâmetro
+      #name: ${NAME}-runtime
+      name: web-app-s2i-ist
+      labels:
+        app: ${APPLICATION_NAME}
+    spec:
+      tags:
+        - name: latest
+          from:
+            #Estamos criando uma imageStreamTag para pegar o código de uma referência
+            # do docker para este gerar a nossa imagem.
+            kind: DockerImage
+            name: nodeshift/ubi8-s2i-web-app:latest
+
+            #Usar imagem oficial dentro do OCP/OKD
+#            kind: ImageStreamTag
+#            namespace: openshift
+#            name: modern-webapp:10.x
+
+  - apiVersion: v1
+    kind: ImageStream
+    metadata:
+      #Nome da imageStream publicada
+      #Voce pode substituir o nome do object com parâmetro
+      #name: ${NAME}-builder
+      name: ${APPLICATION_NAME}-builder
+      labels:
+        app: ${APPLICATION_NAME}
+
+  - apiVersion: v1
+    kind: ImageStream
+    metadata:
+      #Nome da imageStream publicada
+      #Voce pode substituir o nome do object com parâmetro
+      #name: ${NAME}-runtime
+      name: ${APPLICATION_NAME}-runtime
+      labels:
+        app: ${APPLICATION_NAME}
+
+  #SECRET WEBHOOK GITLAB
+  - apiVersion: v1
+    kind: Secret
+    stringData:
+      WebHookSecretKey: ${GENERIC_WEBHOOK_SECRET}
+    metadata:
+      name: ${APPLICATION_NAME}-generic-webhook-secret
+      labels:
+        app: ${APPLICATION_NAME}
+      annotations:
+        template.openshift.io/base64-expose-password: "{.data['WebHookSecretKey']}"
+    #        template.openshift.io/expose-password: "{.data['WebHookSecretKey']}"
+    type: Opaque
+
+  #SECRET
+  - apiVersion: v1
+    kind: Secret
+    stringData:
+      WebHookSecretKey: ${GITLAB_WEBHOOK_SECRET}
+    metadata:
+      annotations:
+        template.openshift.io/base64-expose-password: "{.data['WebHookSecretKey']}"
+      #        template.openshift.io/expose-password: "{.data['WebHookSecretKey']}"
+      name: ${APPLICATION_NAME}-gitlab-webhook-secret
+      labels:
+        app: ${APPLICATION_NAME}
+    type: Opaque
+
+  #BUILCONFIG para construir a imagem BUILDER
+  - apiVersion: v1
+    kind: BuildConfig
+    metadata:
+      name: ${APPLICATION_NAME}-builder
+      annotations:
+        template.alpha.openshift.io/wait-for-ready: "true"
+      labels:
+        app: ${APPLICATION_NAME}
+    spec:
+      #Após a construção da aplicação (build), o resultado será enviado para a IST correspondente.
+      output:
+        to:
+          kind: ImageStreamTag
+          name: ${APPLICATION_NAME}-builder:latest
+      postCommit: {}
+      resources: {}
+      successfulBuildsHistoryLimit: 5
+      failedBuildsHistoryLimit: 5
+      #PASSO 1
+      #Referência do código-fonte onde será puxada o código para build (pull/checkout)
+      source:
+        type: Git
+        git:
+          #Repositório para baixar o código-fonte
+          uri: ${SOURCE_REPOSITORY_URL}
+          #Branch na qual o projeto será fará checkout
+          ref: ${SOURCE_REPOSITORY_REF}
+          #Caso o projeto tenha uma pasta específica para build, informar este parâmetro.
+          #Se a variável for vazia, ela será ignorada.
+        contextDir: ${SOURCE_REPOSITORY_DIR}
+      #PASSO 2
+      #O passo 2 está relacionada a estratégia de build. Onde, iremos pegar o código-fonte do passo 1 e *BUILDAR*
+      strategy:
+        sourceStrategy:
+          env:
+            - name: OUTPUT_DIR
+              value: ${OUTPUT_DIR}
+            - name: NPM_BUILD
+              value: "npm run build"
+          from:
+            kind: ImageStreamTag
+            name: web-app-s2i-ist:latest
+          incremental: true
+        type: Source
+        #Optionalmente você pode configurar trigger (gatilhos) para a construção deste BC (BuildConfig)
+        # Estes gatilhos podem ser dos tipos: ConfigChange, ImageChange, Generic, Gitlab, Github
+        #Ao inserir uma trigger automaticamente, o github, cria uma URL para build.
+      triggers:
+        - type: ConfigChange
+        - type: ImageChange
+        - github:
+            #Esta secret, será um favor informado pelo usuário na criação da app a partir do template.
+            #Este valor se não for informado, será gerado automáticamente em base64.
+            secret: ${GITHUB_WEBHOOK_SECRET}
+          type: GitHub
+        - type: Generic
+          generic:
+            secretReference:
+              name: "${APPLICATION_NAME}-generic-webhook-secret"
+        - type: GitLab
+          gitlab:
+            secretReference:
+              name: "${APPLICATION_NAME}-gitlab-webhook-secret"
+    status:
+      lastVersion: 0
+
+  #BUILCONFIG para construir a imagem RUNTIME
+  - apiVersion: v1
+    kind: BuildConfig
+    metadata:
+      name: ${APPLICATION_NAME}-runtime
+      labels:
+        app: ${APPLICATION_NAME}
+    spec:
+      output:
+        to:
+          kind: ImageStreamTag
+          name: ${APPLICATION_NAME}-runtime:latest
+      postCommit: {}
+      resources: {}
+      #PASSO 1
+      #https://cloud.redhat.com/blog/chaining-builds
+      #Referência do código-fonte onde será 'puxado' o código para build (pull/checkout).
+      #Para trabalhar com Chaining Builds no Openshift, temos uma imagem builder outra imagem runtime.
+      #O resultado da imagem builder é enviado para a imagem runtime a partir do PATH do app BUILDADO.
+      source:
+        type: Image
+        images:
+          - from:
+              kind: ImageStreamTag
+              name: ${APPLICATION_NAME}-builder:latest
+            paths:
+              - destinationDir: .
+                sourcePath: /opt/app-root/output/.
+      strategy:
+        sourceStrategy:
+          from:
+            kind: ImageStreamTag
+            name: nginx-ist-runtime:latest
+          incremental: true
+        type: Source
+      triggers:
+        - type: ConfigChange
+        - type: ImageChange
+          imageChange: {}
+        - type: ImageChange
+          imageChange:
+            from:
+              kind: ImageStreamTag
+              name: ${APPLICATION_NAME}-ist-builder:latest
+        - github:
+            secret: ${GITHUB_WEBHOOK_SECRET}
+          type: GitHub
+        - type: Generic
+          generic:
+            secretReference:
+              name: "${APPLICATION_NAME}-generic-webhook-secret"
+        - type: GitLab
+          gitlab:
+            secretReference:
+              name: "${APPLICATION_NAME}-gitlab-webhook-secret"
+    status:
+      lastVersion: 0
+
+  ##Criar DeploymentConfig
+  - apiVersion: v1
+    kind: DeploymentConfig
+    metadata:
+      labels:
+        app: ${APPLICATION_NAME}
+        profile: dev
+      name: ${APPLICATION_NAME}
+    spec:
+      #Quantas instâncias(Pods) serão criados.
+      replicas: 1
+      #Quantidade de revisões que serão apresentadas (listas) no deploymentoConfig
+      revisionHistoryLimit: 2
+      #Geralmente usamos o selector para indicar uma VM ou pool que máquinas que o openshift vai receber os PODS.
+      #Selector é um texto (tag) que vc configura nos workers para identificar o objeto(vpc,pv, pvc).
+      selector:
+        app: ${APPLICATION_NAME}
+      strategy:
+        #https://docs.openshift.com/container-platform/4.5/applications/deployments/deployment-strategies.html
+        rollingParams:
+          timeoutSeconds: 3600
+        type: Rolling
+      template:
+        metadata:
+          labels:
+            app: ${APPLICATION_NAME}
+        spec:
+          containers:
+            - env:
+                #Você pode injetar valores do padrão hard coded
+                - name: UNIVERSITY
+                  value : 'Faculdade Senai Fatesg'
+                #ou buscar arquivos de um configMap ou Secret ou referência
+                #https://kubernetes.io/docs/tasks/inject-data-application/environment-variable-expose-pod-information/
+                - name: KUBERNETES_NAMESPACE
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.namespace
+              image: ''
+              #https://kubernetes.io/pt-br/docs/concepts/containers/images/
+              #A política padrão de pull é IfNotPresent a qual faz com que o kubelet ignore o processo de pull da imagem,
+              #caso a mesma já exista. Se você prefere sempre forçar o processo de pull, você pode seguir uma das opções abaixo:
+              imagePullPolicy: IfNotPresent
+              name: ${APPLICATION_NAME}-runtime
+              port:
+                - containerPort: ${{APPLICATION_PORT}}
+                  name: http
+                  protocol: TCP
+      triggers:
+        - type: ConfigChange
+        - type: ImageChange
+          imageChangeParams:
+            automatic: true
+            containerNames:
+              - ${APPLICATION_NAME}-runtime
+            from:
+              kind: ImageStreamTag
+              name: ${APPLICATION_NAME}-runtime:latest
+  #Configuracao SERVICE
+  - apiVersion: v1
+    #Geralmente a Service é na porta 8080
+    kind: Service
+    metadata:
+      labels:
+        app: ${APPLICATION_NAME}
+      name: ${APPLICATION_NAME}
+    spec:
+      ports:
+        - name: http
+          port: ${{APPLICATION_PORT}}
+      selector:
+        app: ${APPLICATION_NAME}
+
+  #Configuracao ROUTE
+  - apiVersion: v1
+    #Geralmente a ROUTE é na porta 80
+    kind: Route
+    metadata:
+      annotations:
+        description: Rota genérica criada para a aplicação ${APPLICATION_NAME}
+        template.openshift.io/expose-uri: http://{.spec.host}{.spec.path}
+      labels:
+        app: ${APPLICATION_NAME}
+      name: ${APPLICATION_NAME}
+    spec:
+      port:
+        targetPort: ${{APPLICATION_PORT}}
+      to:
+        kind: Service
+        name: ${APPLICATION_NAME}
+
+parameters:
+  - name: FACULDADE
+    description: Nome da Faculdade - Texto enviado como parâmetro
+    displayName: Nome da faculdade
+    value: 'Faculdade Senai Fatesg'
+    require: true
+
+  - name: APPLICATION_NAME
+    description: Nome da aplicação que será criada no openshift, baseado neste template.
+    displayName: Nome da aplicação
+    require: true
+
+  - name: APPLICATION_PORT
+    description: Porta da aplicação.
+    displayName: Porta da aplicação
+    require: true
+    value: "8080"
+
+  - name: SOURCE_REPOSITORY_URL
+    description: Url do repsitório para fazer clone da aplicação.
+    displayName: Source url
+    require: true
+
+  - name: SOURCE_REPOSITORY_REF
+    description: Branch de referência para fazer o checkout
+    displayName: branch ref
+    value: master
+    require: true
+
+  - name: SOURCE_REPOSITORY_DIR
+    description: Diretório para checkout do projeto.
+    displayName: Source directory
+    value: .
+    require: true
+
+  - name: OUTPUT_DIR
+    description: Diretório de compilação do projeto. Esta informação é referenciada na imagem base, ou seja, image da qual você está 'buildando' o seu código.
+    displayName: Output directory
+    value: build
+    require: false
+
+  - name: GITHUB_WEBHOOK_SECRET
+    description: Secret uusada para configurar o webhook do Github.
+    displayName: GitHub Webhook Secret
+    require: true
+    #É possível criar a secret ao executar o template(apply) através de uma expressão regular.
+    from: '[a-zA-Z0-9]{40}'
+    generate: expression
+
+  - name: GENERIC_WEBHOOK_SECRET
+    description: Secret uusada para configurar o webhook do Genérico.
+    displayName: Generic Webhook Secret
+    require: true
+    #É possível criar a secret ao executar o template(apply) através de uma expressão regular.
+    from: '[a-zA-Z0-9]{40}'
+    generate: expression
+
+  - name: GITLAB_WEBHOOK_SECRET
+    description: Senha gerada para webhook gitlab.
+    displayName: Token de acesso para o webhook gitlab
+    from: "[a-zA-Z0-9]{40}"
+    generate: expression
