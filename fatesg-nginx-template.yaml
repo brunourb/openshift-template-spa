@@ -230,7 +230,7 @@ objects:
           imageChange:
             from:
               kind: ImageStreamTag
-              name: ${APPLICATION_NAME}-ist-builder:latest
+              name: ${APPLICATION_NAME}-builder:latest
         - github:
             secret: ${GITHUB_WEBHOOK_SECRET}
           type: GitHub
